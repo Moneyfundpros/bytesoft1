@@ -1,25 +1,22 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getExamsForCourse, getQuestionsForExam, submitExamAttempt, getAttemptsForStudent } from '@/lib/cbtService';
+import CBTExam from './CBTExam';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 export default function CBTTab() {
   const { user } = useAuth();
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExam, setSelectedExam] = useState<any | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
-  const [started, setStarted] = useState(false);
+  const [mode, setMode] = useState<'none' | 'practice' | 'exam'>('none');
   const [questions, setQuestions] = useState<any[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
-  const [timeLeft, setTimeLeft] = useState<number>(0);
-  const timerRef = useRef<number | null>(null as any);
   const [history, setHistory] = useState<any[]>([]);
 
   useEffect(() => {
     async function load() {
       if (!user) return;
       try {
-        // For demo: fetch all exams (better: filter by enrolled courses)
         const list = await getExamsForCourse('');
         setExams(list || []);
         const hist = await getAttemptsForStudent(user.id);
@@ -33,144 +30,101 @@ export default function CBTTab() {
     load();
   }, [user]);
 
-  useEffect(() => {
-    if (!started) return;
-    if (timeLeft <= 0) {
-      handleSubmit();
+  const openPractice = async () => {
+    // load a pool of questions for practice (all available)
+    const qs = await getQuestionsForExam('');
+    setQuestions(qs || []);
+    setSelectedExam(null);
+    setMode('practice');
+  };
+
+  const openExam = async () => {
+    if (!exams || exams.length === 0) {
+      alert('No exam found');
       return;
     }
-    timerRef.current = window.setTimeout(() => setTimeLeft(t => t - 1), 1000);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [started, timeLeft]);
-
-  const openInstructions = (exam: any) => {
-    setSelectedExam(exam);
-    setShowInstructions(true);
+    // pick the first scheduled exam for demo; in real app filter by enrollment/course
+    const ex = exams[0];
+    setSelectedExam(ex);
+    const qs = await getQuestionsForExam(ex.courseId || ex.course);
+    setQuestions(qs || []);
+    setMode('exam');
   };
 
-  const beginExam = async () => {
-    if (!selectedExam) return;
+  const handleSubmit = async (result: any) => {
     try {
-      setShowInstructions(false);
-      setStarted(true);
-      setTimeLeft((selectedExam.duration || 10) * 60);
-      // load questions for course
-      const qs = await getQuestionsForExam(selectedExam.courseId || selectedExam.course);
-      setQuestions(qs || []);
-      setCurrentIndex(0);
-      setAnswers({});
-    } catch (error) {
-      console.error('Error beginning exam:', error);
-      alert('Failed to load exam questions. Please try again.');
-      setStarted(false);
-    }
-  };
-
-  const handleSelect = (idx: number, option: string) => {
-    setAnswers(a => ({ ...a, [idx]: option }));
-  };
-
-  const handleSubmit = async () => {
-    try {
-      // auto-grade simple multiple choice
-      let correct = 0;
-      questions.forEach((q, idx) => {
-        const ans = answers[idx];
-        if (ans && q.correctAnswer && ans === q.correctAnswer) correct++;
-      });
-      const score = correct;
       const attempt = {
         examId: selectedExam?.id || null,
         studentId: user?.id,
-        courseId: selectedExam?.courseId || selectedExam?.course,
-        answers,
-        score,
-        totalQuestions: questions.length,
-        percentage: questions.length ? Math.round((score / questions.length) * 100) : 0,
-        passed: true,
-        startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString()
+        courseId: selectedExam?.courseId || selectedExam?.course || null,
+        ...result,
       };
       await submitExamAttempt(attempt);
-      setStarted(false);
-      setSelectedExam(null);
-      // refresh history
       const hist = await getAttemptsForStudent(user!.id);
       setHistory(hist || []);
-      alert('Exam submitted. Score: ' + score + '/' + questions.length);
+      setMode('none');
+      setSelectedExam(null);
+      setQuestions([]);
+      alert('Exam submitted. Score: ' + result.score + '/' + result.total);
     } catch (error) {
-      console.error('Error submitting exam:', error);
-      alert('Failed to submit exam. Please try again.');
+      console.error('Error submitting attempt:', error);
+      alert('Failed to submit exam attempt');
     }
   };
 
   return (
-    <div>
-      <h2>Available CBT Exams</h2>
-      <div>
-        {exams.length === 0 && <div>No exams available</div>}
-        {exams.map((ex) => (
-          <div key={ex.id} style={{ border: '1px solid #ddd', padding: 8, marginBottom: 8 }}>
-            <div><strong>{ex.title}</strong></div>
-            <div>Course: {ex.courseId || ex.course}</div>
-            <div>Duration: {ex.duration} minutes</div>
-            <div>Questions: {ex.totalQuestions || 'N/A'}</div>
-            <button onClick={() => openInstructions(ex)}>Start Exam</button>
-          </div>
-        ))}
-      </div>
-
-      {showInstructions && selectedExam && (
-        <div style={{ marginTop: 12, border: '1px solid #ccc', padding: 12 }}>
-          <h3>Instructions for {selectedExam.title}</h3>
-          <p>Duration: {selectedExam.duration} minutes</p>
-          <p>Please read instructions carefully. The exam will auto-submit when time ends.</p>
-          <button onClick={beginExam}>Begin Test</button>
-          <button onClick={() => setShowInstructions(false)} style={{ marginLeft: 8 }}>Cancel</button>
-        </div>
-      )}
-
-      {started && (
-        <div style={{ marginTop: 12 }}>
-          <h3>Exam: {selectedExam?.title}</h3>
-          <div>Time left: {Math.floor(timeLeft / 60)}:{('0' + (timeLeft % 60)).slice(-2)}</div>
-          {questions.length > 0 ? (
-            <div style={{ marginTop: 12 }}>
-              <div>Question {currentIndex + 1} / {questions.length}</div>
-              <div style={{ marginTop: 8 }}>{questions[currentIndex].questionText}</div>
-              <div style={{ marginTop: 8 }}>
-                {['A', 'B', 'C', 'D'].map((opt) => (
-                  <div key={opt} style={{ marginTop: 6 }}>
-                    <label>
-                      <input type="radio" name={`q-${currentIndex}`} checked={answers[currentIndex] === opt} onChange={() => handleSelect(currentIndex, opt)} /> {opt}. {questions[currentIndex][`option${opt}`] || '---'}
-                    </label>
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <button onClick={() => setCurrentIndex(i => Math.max(0, i - 1))} disabled={currentIndex === 0}>Previous</button>
-                <button onClick={() => setCurrentIndex(i => Math.min(questions.length - 1, i + 1))} style={{ marginLeft: 8 }}>Next</button>
-                <button onClick={handleSubmit} style={{ marginLeft: 8 }}>Submit</button>
-              </div>
+    <div className="space-y-6">
+      {mode === 'none' && (
+        <Card>
+          <CardContent className="p-6">
+            <h3 className="text-lg font-semibold mb-2">CBT Exams</h3>
+            <p className="text-sm text-muted-foreground mb-4">Choose a mode to begin.</p>
+            <div className="flex gap-3">
+              <Button onClick={openExam}>Take Exam</Button>
+              <Button variant="outline" onClick={openPractice}>Practice Mode</Button>
             </div>
-          ) : (
-            <div>Loading questions...</div>
-          )}
-        </div>
+
+            <div className="mt-4">
+              {exams.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No scheduled exams found.</div>
+              ) : (
+                <div className="space-y-2">
+                  {exams.map(e => (
+                    <div key={e.id} className="p-3 border rounded-lg">
+                      <div className="font-medium">{e.title}</div>
+                      <div className="text-xs text-muted-foreground">Duration: {e.duration} minutes · Questions: {e.totalQuestions || 'N/A'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      <h3 style={{ marginTop: 16 }}>History</h3>
+      {(mode === 'practice' || mode === 'exam') && (
+        <CBTExam
+          mode={mode}
+          exam={selectedExam}
+          questions={questions}
+          durationMinutes={selectedExam?.duration || 10}
+          onSubmit={handleSubmit}
+          onClose={() => { setMode('none'); setQuestions([]); setSelectedExam(null); }}
+        />
+      )}
+
       <div>
-        {history.length === 0 && <div>No past attempts</div>}
-        {history.map(h => (
-          <div key={h.id} style={{ border: '1px solid #eee', padding: 8, marginBottom: 6 }}>
-            <div>Exam: {h.examId}</div>
-            <div>Score: {h.score} / {h.totalQuestions}</div>
-            <div>Date: {h.completedAt}</div>
-          </div>
-        ))}
+        <h4 className="text-base font-semibold">History</h4>
+        <div className="space-y-2 mt-2">
+          {history.length === 0 && <div className="text-sm text-muted-foreground">No past attempts</div>}
+          {history.map(h => (
+            <div key={h.id} className="p-3 border rounded-lg">
+              <div>Exam: {h.examId}</div>
+              <div>Score: {h.score} / {h.total}</div>
+              <div>Date: {h.completedAt}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

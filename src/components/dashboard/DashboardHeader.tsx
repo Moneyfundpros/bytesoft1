@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Sun, Moon } from 'lucide-react';
+import { useTheme } from '@/components/ThemeProvider';
 import AccountDropdown from './AccountDropdown';
 import {
   DropdownMenu,
@@ -81,6 +82,9 @@ const DashboardHeader = ({
               </div>
             )}
 
+            {/* Theme toggle (light / dark) */}
+            <ThemeToggle />
+
             <AccountDropdown
               userName={userName}
               userEmail={userEmail}
@@ -127,5 +131,28 @@ const DashboardHeader = ({
     </header>
   );
 };
+
+// Theme toggle component
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+
+  const toggle = () => {
+    if (theme === 'dark') setTheme('light');
+    else setTheme('dark');
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={toggle}
+      className="h-10 w-10 p-0 rounded-full hover:bg-muted hidden sm:inline-flex items-center justify-center"
+      aria-label="Toggle theme"
+      title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+    >
+      {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+    </Button>
+  );
+}
 
 export default DashboardHeader;

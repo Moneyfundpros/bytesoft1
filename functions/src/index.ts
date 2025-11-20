@@ -7,13 +7,18 @@ import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import { AccessToken } from 'livekit-server-sdk';
 import axios from 'axios';
+// axios removed (unused after removing Paystack integration)
 
 admin.initializeApp();
 
-const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || '';
-const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
-const LIVEKIT_URL = process.env.LIVEKIT_URL || '';
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || '';
+// Prefer Firebase functions config (recommended for deployed env) and
+// fall back to process.env (useful for local .env during development).
+const cfg = functions.config ? functions.config() : {} as any;
+
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || cfg.livekit?.api_key || '';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || cfg.livekit?.api_secret || '';
+const LIVEKIT_URL = process.env.LIVEKIT_URL || cfg.livekit?.url || '';
+// Paystack removed: do not load Paystack env variables
 
 if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
   functions.logger.error('LiveKit credentials not configured. Please set LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL environment variables.');
@@ -29,7 +34,7 @@ const validateAuthToken = async (req: functions.https.Request): Promise<{ uid: s
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     return { uid: decodedToken.uid };
-  } catch (error) {
+  } catch (error: any) {
     functions.logger.warn('Token verification failed:', error);
     return null;
   }
@@ -99,7 +104,7 @@ export const token = functions.https.onRequest(async (req, res) => {
 
     functions.logger.info(`Token generated for user ${authResult.uid} in room ${roomName}`);
     res.status(200).json({ token: generatedToken, url: LIVEKIT_URL });
-  } catch (error) {
+  } catch (error: any) {
     functions.logger.error('Error generating token:', error);
     res.status(500).json({ error: 'Failed to generate token' });
   }
@@ -154,7 +159,7 @@ export const createMeeting = functions.https.onRequest(async (req, res) => {
     });
 
     res.status(201).json({ id: meetingRef.id, message: 'Meeting created successfully' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating meeting:', error);
     res.status(500).json({ error: 'Failed to create meeting' });
   }
@@ -214,133 +219,111 @@ export const getMeetings = functions.https.onRequest(async (req, res) => {
     }));
 
     res.status(200).json({ meetings });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching meetings:', error);
     res.status(500).json({ error: 'Failed to fetch meetings' });
   }
 });
 
+// Paystack integration removed: provide stub endpoints that return 410 Gone
 export const verifyPaystackPayment = functions.https.onRequest(async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') { res.status(200).send(''); return; }
+  res.status(410).json({ error: 'Paystack integration has been removed from this project' });
+});
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).send('');
-    return;
+export const createPaystackTransaction = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') { res.status(200).send(''); return; }
+  res.status(410).json({ error: 'Paystack integration has been removed from this project' });
+});
+
+// Callable function: generate exam questions using coordinator AI key stored at /settings/aiKey
+export const generateExamQuestions = functions.https.onCall(async (data, context) => {
+  // data: { courseId, schemeItems: string[], duration, numQuestions, difficulty }
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
+  const uid = context.auth.uid;
+  const { courseId, schemeItems, duration, numQuestions, difficulty } = data;
+
+  if (!courseId || !Array.isArray(schemeItems) || schemeItems.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing courseId or schemeItems');
   }
 
+  // verify user is teacher of the course
+  const courseDoc = await admin.firestore().collection('courses').doc(courseId).get();
+  if (!courseDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'Course not found');
+  }
+  const course = courseDoc.data();
+  if (!course) {
+    throw new functions.https.HttpsError('not-found', 'Course not found');
+  }
+  if (course.teacherId !== uid && !(await (async () => {
+    const userDoc = await admin.firestore().collection('users').doc(uid).get();
+    return userDoc.exists && (userDoc.data()?.role === 'coordinator' || userDoc.data()?.role === 'admin');
+  })())) {
+    throw new functions.https.HttpsError('permission-denied', 'Only the assigned teacher, coordinator or admin may generate questions for this course');
+  }
+
+  // read coordinator AI key from /settings/aiKey
+  const settingsDoc = await admin.firestore().collection('settings').doc('aiKey').get();
+  const settings = settingsDoc.exists ? settingsDoc.data() : null;
+  const provider = settings?.provider || null;
+  const apiKey = settings?.key || null;
+
+  // If no provider/key configured, generate placeholder questions locally (deterministic simple generator)
+  if (!apiKey) {
+    const generated = ([] as any[]).concat(...schemeItems.map((s: string, idx: number) => {
+      const countPer = Math.max(1, Math.floor(numQuestions / schemeItems.length));
+      const items: any[] = [];
+      for (let i = 0; i < countPer; i++) {
+        const qnum = idx * countPer + i + 1;
+        items.push({
+          question: `(${s}) Sample question ${qnum}: Explain the concept of ${s} and show an example.`,
+          options: ['Answer A', 'Answer B', 'Answer C', 'Answer D'],
+          correct: 'Answer A',
+          schemeItem: s,
+          points: 1
+        });
+      }
+      return items;
+    }));
+    return { questions: generated.slice(0, numQuestions), source: 'local_stub' };
+  }
+
+  // Provider call (generic): provider and apiKey determine the endpoint
+  // This example calls an OpenAI-like endpoint if provider === 'openai' (user can change as needed)
   try {
-    if (!PAYSTACK_SECRET_KEY) {
-      functions.logger.error('Paystack secret key not configured');
-      res.status(500).json({ error: 'Payment verification service unavailable' });
-      return;
-    }
-
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-
-    const idToken = authHeader.split('Bearer ')[1];
-    let decodedToken;
-    try {
-      decodedToken = await admin.auth().verifyIdToken(idToken);
-    } catch (error) {
-      res.status(401).json({ error: 'Invalid token' });
-      return;
-    }
-
-    const userId = decodedToken.uid;
-    const { reference, courseId, amount } = req.body;
-
-    if (!reference || !courseId || !amount) {
-      res.status(400).json({ error: 'Missing required fields: reference, courseId, amount' });
-      return;
-    }
-
-    if (typeof reference !== 'string' || typeof courseId !== 'string' || typeof amount !== 'number') {
-      res.status(400).json({ error: 'Invalid field types' });
-      return;
-    }
-
-    try {
-      const paystackResponse = await axios.get(
-        `https://api.paystack.co/transaction/verify/${reference}`,
-        {
-          headers: {
-            Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-          },
-        }
-      );
-
-      const { status, data } = paystackResponse.data;
-
-      if (!status || data.status !== 'success') {
-        functions.logger.warn(`Payment verification failed for reference ${reference}`);
-        res.status(400).json({ verified: false, error: 'Payment not successful' });
-        return;
-      }
-
-      if (data.amount !== amount * 100) {
-        functions.logger.warn(`Amount mismatch for reference ${reference}`);
-        res.status(400).json({ verified: false, error: 'Amount mismatch' });
-        return;
-      }
-
-      const courseDoc = await admin.firestore().collection('courses').doc(courseId).get();
-      if (!courseDoc.exists) {
-        res.status(404).json({ verified: false, error: 'Course not found' });
-        return;
-      }
-
-      const paymentRef = await admin.firestore().collection('payments').add({
-        userId,
-        courseId,
-        amount,
-        currency: 'NGN',
-        reference,
-        status: 'completed',
-        verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        metadata: {
-          courseTitle: courseDoc.data()?.title || 'Unknown',
-          userName: decodedToken.name || decodedToken.email || 'User',
-        },
+    if (provider === 'openai') {
+      const prompt = `Create ${numQuestions} multiple-choice questions from these topics:\n${schemeItems.join('\n')}\nDifficulty: ${difficulty} \nInclude 4 options and indicate the correct option.`;
+      const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'system', content: 'You are a helpful exam question generator.' }, { role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 1500
+      }, {
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
       });
 
-      await admin.firestore().collection('users').doc(userId).set({
-        isVerified: true,
-        verified: true,
-        verificationType: 'paystack',
-        purchasedCourses: admin.firestore.FieldValue.arrayUnion(courseId),
-        verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-
-      functions.logger.info(`Payment verified for user ${userId} - Reference: ${reference}`);
-      functions.logger.info(`User ${userId} marked as verified after payment with verificationType: paystack`);
-
-      res.status(200).json({
-        verified: true,
-        paymentId: paymentRef.id,
-        message: 'Payment verified successfully',
-      });
-    } catch (paystackError) {
-      if (axios.isAxiosError(paystackError)) {
-        functions.logger.error(`Paystack API error: ${paystackError.message}`, paystackError.response?.data);
-        res.status(500).json({ verified: false, error: 'Payment gateway error' });
-      } else {
-        throw paystackError;
-      }
+      // naive parse of returned text into questions — recommend improving parsing on real provider
+      const text = resp.data?.choices?.[0]?.message?.content || resp.data?.choices?.[0]?.text || '';
+      // split by numbered lines as a heuristic
+      const raw = text.split(/\n\d+\.\s+/).map(s => s.trim()).filter(Boolean);
+      const questions = raw.slice(0, numQuestions).map(r => ({ question: r, options: [], correct: null }));
+      return { questions, source: 'openai' };
     }
-  } catch (error) {
-    functions.logger.error('Error verifying payment:', error);
-    res.status(500).json({ error: 'Failed to verify payment' });
+
+    // unsupported provider: return stub
+    return { questions: [], source: 'unsupported_provider' };
+  } catch (err: any) {
+    functions.logger.error('AI generation failed:', err.message || err);
+    throw new functions.https.HttpsError('internal', 'AI generation failed');
   }
 });

@@ -164,11 +164,37 @@ service cloud.firestore {
       allow delete: if isOwner(userId) || isAdmin();
     }
 
+    // Helper: check if authenticated user is enrolled in a course
+    // NOTE: This check assumes enrollment documents use the id pattern: "{studentUid}_{courseId}"
+    // When creating enrollments from the client, enforce this id scheme for proper rule checks.
+    function isEnrolled(courseId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + courseId));
+    }
+
     // Courses collection
     match /courses/{courseId} {
       allow read: if isAuthenticated();
       allow create, update: if isCoordinator();
       allow delete: if isAdmin() || (isTeacher() && resource.data.instructorId == request.auth.uid);
+    }
+
+    // Scheme of Work subcollection under courses: /courses/{courseId}/scheme/{itemId}
+    match /courses/{courseId}/scheme/{itemId} {
+      // Creation: only the teacher assigned to this course may create scheme items
+      allow create: if isTeacher() && request.resource.data.teacherId == request.auth.uid && request.resource.data.courseId == courseId && (
+        // verify teacher owns the course
+        get(/databases/$(database)/documents/courses/$(courseId)).data.teacherId == request.auth.uid
+      );
+
+      // Read: teachers assigned to course, coordinators, admins, or enrolled students
+      allow read: if isAuthenticated() && (
+        (isTeacher() && get(/databases/$(database)/documents/courses/$(courseId)).data.teacherId == request.auth.uid)
+        || isCoordinator() || isAdmin()
+        || isEnrolled(courseId)
+      );
+
+      // Update/Delete: only the creating teacher or admin
+      allow update, delete: if isTeacher() && resource.data.teacherId == request.auth.uid || isAdmin();
     }
 
     // Enrollments collection
@@ -395,13 +421,32 @@ service cloud.firestore {
     }
 
     // Payments collection
+    // Payments are created for course enrollments. Documents are typically
+    // created by server-side functions (admin SDK) but we also allow authenticated
+    // users to create a payment record (client-side) as long as the `userId`
+    // field matches request.auth.uid and required fields are present.
     match /payments/{paymentId} {
-      // Users can read their own payments
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      // Coordinators can read all payments for verification
-      allow read: if isCoordinator() || isAdmin();
-      // Only Cloud Functions can create/update payments
-      allow create, update, delete: if false;
+      // Allow coordinators and admins to read all payments; owners can read their own
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId ||
+        isCoordinator() || isAdmin()
+      );
+
+      // Allow authenticated user to create a payment document (server-generated id or client id)
+      // Require: userId == request.auth.uid, courseId string, amount number, reference string, status string
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        (request.resource.data.courseId is string) &&
+        (request.resource.data.amount is number) &&
+        (request.resource.data.reference is string) &&
+        (request.resource.data.status is string) &&
+        request.resource.data.email == request.auth.token.email;
+
+      // Allow owner or admin to update their payment document (use cautiously)
+      allow update: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
+
+      // Deletes only by admin
+      allow delete: if isAdmin();
     }
 
     // Courses subcollections for students and subcollections for enrollments
@@ -488,11 +533,20 @@ service cloud.firestore {
     // CBT Exams - exams metadata and scheduling
     match /cbt_exams/{examId} {
       allow read: if isAuthenticated() && (
-        isCoordinator() || isAdmin() || isTeacher() || isStudent()
+        // Coordinators, admins and course teachers can read
+        isCoordinator() || isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        // Students may read only if enrolled in the course this exam belongs to
+        (isStudent() && isEnrolled(resource.data.courseId))
       );
-      allow create: if isTeacher() && request.resource.data.teacherId == request.auth.uid || isCoordinator() || isAdmin();
-      allow update: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isCoordinator() || isAdmin();
-      allow delete: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
+      // Creation: only teacher assigned to the course (teacherId must match auth.uid) or coordinator/admin
+      allow create: if (isTeacher() && request.resource.data.teacherId == request.auth.uid && request.resource.data.courseId is string) || isCoordinator() || isAdmin();
+      // Updates: only the creating teacher may update (teacherId == resource.teacherId), or coordinators/admins
+      // Prevent updates once an exam is published (only admins may modify published exams)
+      allow update: if isAdmin() || (
+        ( (isTeacher() && resource.data.teacherId == request.auth.uid) || isCoordinator() )
+        && (resource.data.status != 'published')
+      );
+      allow delete: if (isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid));
     }
 
     // Exam Attempts - students submit attempts; teachers and coordinators can read attempts in their courses
@@ -504,24 +558,38 @@ service cloud.firestore {
         isTeacher() || isCoordinator() || isAdmin()
       );
       // Students may create their own attempts
-      allow create: if isStudent() && request.resource.data.studentId == request.auth.uid;
+      allow create: if isStudent() && request.resource.data.studentId == request.auth.uid && request.resource.data.courseId is string;
       // Teachers/coordinator/cloud functions may update score/status
       allow update: if isTeacher() || isCoordinator() || isAdmin();
       allow delete: if isAdmin();
     }
 
+    // Practice mode attempts: stored under practiceAttempts/{userId}/attempts/{attemptId}
+    match /practiceAttempts/{userId}/attempts/{attemptId} {
+      // Only the owner (student) may create/read/update/delete their practice attempts
+      allow create: if request.auth != null && request.auth.uid == userId && request.resource.data.studentId == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+    }
+
     // AI API Keys - only coordinators may create/update their own API keys
     // IMPORTANT: For production, store API keys via a server-side Cloud Function with KMS encryption
+    // Allow coordinators to store the system AI key at /settings/aiKey
+    match /settings/aiKey {
+      allow read: if isAuthenticated() && (isCoordinator() || isAdmin());
+      allow create, update: if isCoordinator() && request.auth.uid == request.resource.data.coordinatorId;
+      allow delete: if isAdmin() || (isCoordinator() && resource.data.coordinatorId == request.auth.uid);
+    }
+
     match /ai_api_keys/{keyId} {
       allow read: if isAuthenticated() && (
-        // Coordinator may read their own key metadata
         (isCoordinator() && get(/databases/$(database)/documents/ai_api_keys/$(keyId)).data.coordinatorId == request.auth.uid) ||
-        // Admin may read
         isAdmin()
       );
       allow create: if isCoordinator() && request.resource.data.coordinatorId == request.auth.uid;
       allow update: if isCoordinator() && get(/databases/$(database)/documents/ai_api_keys/$(keyId)).data.coordinatorId == request.auth.uid;
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isCoordinator() && resource.data.coordinatorId == request.auth.uid);
     }
 
     // Default deny all other collections

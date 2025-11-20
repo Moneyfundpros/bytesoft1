@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 
 export async function saveCoordinatorApiKey(coordinatorId: string, apiKey: string) {
   // NOTE: This is a minimal client-side storage implementation. For production,
@@ -25,4 +25,9 @@ export async function getCoordinatorApiKey(coordinatorId: string) {
   } catch (e) {
     return { ...data, apiKey: null };
   }
+}
+
+export async function deleteCoordinatorApiKey(coordinatorId: string) {
+  const ref = doc(db, 'ai_api_keys', coordinatorId);
+  await deleteDoc(ref);
 }

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import CBTManagementTab from '@/components/teacher/CBTManagementTab';
+import SchemeOfWorkTab from '@/components/teacher/SchemeOfWorkTab';
+import CBTCreateModal from '@/components/teacher/CBTCreateModal';
+import TeachersTab from '@/components/teacher/TeachersTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,6 +41,7 @@ const TeacherDashboard = () => {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [selectedCourseName, setSelectedCourseName] = useState<string>('');
   const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'teacher') {
@@ -219,7 +223,9 @@ const TeacherDashboard = () => {
             <TabsTrigger value="course-students">Course Students</TabsTrigger>
             <TabsTrigger value="browse">Browse Courses</TabsTrigger>
             <TabsTrigger value="requests">My Requests</TabsTrigger>
+            <TabsTrigger value="scheme">Scheme of Work</TabsTrigger>
             <TabsTrigger value="cbt">CBT Exams</TabsTrigger>
+            <TabsTrigger value="teachers">Teachers</TabsTrigger>
             <TabsTrigger value="classes">Classes</TabsTrigger>
             <TabsTrigger value="links">Share Links</TabsTrigger>
             <TabsTrigger value="meetings">Meetings</TabsTrigger>
@@ -257,7 +263,7 @@ const TeacherDashboard = () => {
             ) : (
               <div className="space-y-4">
                 {courses.map(course => (
-                  <Collapsible key={course.id} open={expandedCourseId === course.id} onOpenChange={(open) => setExpandedCourseId(open ? course.id : null)}>
+                  <Collapsible key={course.id} open={expandedCourseId === course.id} onOpenChange={(open) => { setExpandedCourseId(open ? course.id : null); setSelectedCourseId(open ? course.id : null); setSelectedCourseName(open ? course.title : ''); }}>
                     <Card className="overflow-hidden transition-all duration-300 hover:shadow-lg">
                       <CollapsibleTrigger asChild>
                         <Button variant="ghost" className="w-full justify-start p-0 h-auto hover:bg-transparent">
@@ -296,6 +302,12 @@ const TeacherDashboard = () => {
                             courseId={course.id}
                             courseName={course.title}
                           />
+                          <div className="mt-4">
+                            <CourseStudentsList courseId={course.id} courseName={course.title} />
+                          </div>
+                          <div className="mt-4">
+                            {/* Provide quick select for scheme/exam creation */}
+                          </div>
                         </div>
                       </CollapsibleContent>
                     </Card>
@@ -324,8 +336,32 @@ const TeacherDashboard = () => {
             </Card>
           </TabsContent>
 
+          <TabsContent value="scheme" className="space-y-4">
+            <SchemeOfWorkTab courseId={selectedCourseId || undefined} />
+          </TabsContent>
+
           <TabsContent value="cbt" className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Select a course to create or manage exams</p>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                {courses.map(c => (
+                  <Button key={c.id} variant={selectedCourseId === c.id ? 'default' : 'outline'} onClick={() => { setSelectedCourseId(c.id); setSelectedCourseName(c.title); }}>
+                    {c.title}
+                  </Button>
+                ))}
+              </div>
+              {selectedCourseId && (
+                <div className="mt-4">
+                  <Button onClick={() => setCreateModalOpen(true)}>Create Exam for {selectedCourseName}</Button>
+                  <CBTCreateModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} courseId={selectedCourseId} />
+                </div>
+              )}
+            </div>
             <CBTManagementTab />
+          </TabsContent>
+
+          <TabsContent value="teachers" className="space-y-4">
+            <TeachersTab courseId={selectedCourseId || undefined} />
           </TabsContent>
 
           <TabsContent value="students" className="space-y-4">

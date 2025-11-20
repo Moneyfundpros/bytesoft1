@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getCoordinatorApiKey, saveCoordinatorApiKey } from '@/lib/aiApiService';
+import { getCoordinatorApiKey, saveCoordinatorApiKey, deleteCoordinatorApiKey } from '@/lib/aiApiService';
+import { Button } from '@/components/ui/button';
 
 export default function AIAPIKeyTab() {
   const { user } = useAuth();
@@ -40,6 +41,19 @@ export default function AIAPIKeyTab() {
     }
   };
 
+  const handleRemove = async () => {
+    if (!user) return;
+    setMessage('Removing API key...');
+    try {
+      await deleteCoordinatorApiKey(user.id);
+      setExisting(null);
+      setMessage('API key removed');
+    } catch (e) {
+      console.error(e);
+      setMessage('Failed to remove API key');
+    }
+  };
+
   return (
     <div style={{ padding: 16 }}>
       <h2>AI API Integration</h2>
@@ -47,15 +61,18 @@ export default function AIAPIKeyTab() {
 
       <div style={{ marginTop: 12 }}>
         {existing ? (
-          <div>
-            <strong>Existing Key:</strong> <span>{masked(existing.apiKey || '')}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div>
+              <strong>Existing Key:</strong> <span>{masked(existing.apiKey || '')}</span>
+            </div>
+            <Button variant="destructive" size="sm" onClick={handleRemove}>Remove</Button>
           </div>
         ) : (
           <div>No API key saved yet.</div>
         )}
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
         <input
           type="text"
           value={keyInput}
@@ -63,7 +80,7 @@ export default function AIAPIKeyTab() {
           placeholder="Paste API key here"
           style={{ width: 420, padding: 8 }}
         />
-        <button onClick={handleSave} style={{ marginLeft: 8, padding: '8px 12px' }}>Save API Key</button>
+        <Button onClick={handleSave}>Save API Key</Button>
       </div>
 
       {message && <div style={{ marginTop: 8 }}>{message}</div>}

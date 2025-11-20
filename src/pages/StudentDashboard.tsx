@@ -18,6 +18,7 @@ import { SpecialLinksTab } from '@/components/courses/SpecialLinksTab';
 import { purchasedCoursesService } from '@/lib/purchasedCoursesService';
 import { verificationService } from '@/lib/verificationService';
 import { VerifiedBadge } from '@/components/ui/verified-badge';
+import PaystackPayment from '@/components/student/PaystackPayment';
 
 interface EnrolledCourse extends Enrollment {
   course?: Course;
@@ -160,6 +161,10 @@ const StudentDashboard = () => {
               gradient
             />
           </div>
+        </div>
+
+        <div className="mb-6">
+          <PaystackPayment />
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">

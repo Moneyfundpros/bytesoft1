@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { createExam, addQuestion, getExamsForCourse, getAttemptsForExam } from '@/lib/cbtService';
+import { createExam, addQuestion, getExamsForCourse, getAttemptsForExam, generateQuestionsForExam } from '@/lib/cbtService';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function CBTManagementTab() {
@@ -55,6 +55,18 @@ export default function CBTManagementTab() {
     }
   };
 
+  const handleGenerate = async () => {
+    if (!user) return;
+    try {
+      const result = await generateQuestionsForExam({ courseId, schemeItems: ['Sample topic'], duration, numQuestions, difficulty: 'Normal' });
+      console.log('Generated questions:', result);
+      alert('Generated ' + (result.questions?.length || 0) + ' questions (check console for details)');
+    } catch (error) {
+      console.error('Generation failed:', error);
+      alert('Failed to generate questions. See console for details.');
+    }
+  };
+
   const viewResults = async (examId: string) => {
     try {
       const r = await getAttemptsForExam(examId);
@@ -94,6 +106,7 @@ export default function CBTManagementTab() {
             <option value="D">D</option>
           </select>
           <button onClick={handleAddQuestion} style={{ marginLeft: 8 }}>Save Question</button>
+          <button onClick={handleGenerate} style={{ marginLeft: 8 }}>Generate Questions (AI)</button>
         </div>
       </div>
 

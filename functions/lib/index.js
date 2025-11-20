@@ -32,16 +32,27 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var _a, _b, _c;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMeetings = exports.createMeeting = exports.token = void 0;
+exports.createPaystackTransaction = exports.verifyPaystackPayment = exports.getMeetings = exports.createMeeting = exports.token = void 0;
+const dotenv = __importStar(require("dotenv"));
+const path = __importStar(require("path"));
+// manually load .env from functions/ folder
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const livekit_server_sdk_1 = require("livekit-server-sdk");
+// axios removed (unused after removing Paystack integration)
 admin.initializeApp();
-const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
-const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
-if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
-    functions.logger.warn('LiveKit credentials not configured. Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET environment variables.');
+// Prefer Firebase functions config (recommended for deployed env) and
+// fall back to process.env (useful for local .env during development).
+const cfg = functions.config ? functions.config() : {};
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || ((_a = cfg.livekit) === null || _a === void 0 ? void 0 : _a.api_key) || '';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || ((_b = cfg.livekit) === null || _b === void 0 ? void 0 : _b.api_secret) || '';
+const LIVEKIT_URL = process.env.LIVEKIT_URL || ((_c = cfg.livekit) === null || _c === void 0 ? void 0 : _c.url) || '';
+// Paystack removed: do not load Paystack env variables
+if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
+    functions.logger.error('LiveKit credentials not configured. Please set LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL environment variables.');
 }
 const validateAuthToken = async (req) => {
     try {
@@ -71,7 +82,7 @@ exports.token = functions.https.onRequest(async (req, res) => {
         return;
     }
     try {
-        if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+        if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
             res.status(500).json({ error: 'LiveKit credentials not configured' });
             return;
         }
@@ -108,7 +119,7 @@ exports.token = functions.https.onRequest(async (req, res) => {
         });
         const generatedToken = await at.toJwt();
         functions.logger.info(`Token generated for user ${authResult.uid} in room ${roomName}`);
-        res.status(200).json({ token: generatedToken });
+        res.status(200).json({ token: generatedToken, url: LIVEKIT_URL });
     }
     catch (error) {
         functions.logger.error('Error generating token:', error);
@@ -212,5 +223,26 @@ exports.getMeetings = functions.https.onRequest(async (req, res) => {
         console.error('Error fetching meetings:', error);
         res.status(500).json({ error: 'Failed to fetch meetings' });
     }
+});
+// Paystack integration removed: provide stub endpoints that return 410 Gone
+exports.verifyPaystackPayment = functions.https.onRequest(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        res.status(200).send('');
+        return;
+    }
+    res.status(410).json({ error: 'Paystack integration has been removed from this project' });
+});
+exports.createPaystackTransaction = functions.https.onRequest(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        res.status(200).send('');
+        return;
+    }
+    res.status(410).json({ error: 'Paystack integration has been removed from this project' });
 });
 //# sourceMappingURL=index.js.map
